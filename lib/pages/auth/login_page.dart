@@ -101,10 +101,11 @@ class _LoginPageState extends State<LoginPage> {
       await _saveCredentials(email, password);
       if (!mounted) return;
       if (user.role == UserRole.elderly) {
-        await BackgroundServiceHelper.startForElderly(user.id, user.name);
+        await BackgroundServiceHelper.startService(user.id, user.name, true);
         Navigator.pushReplacement(context,
             MaterialPageRoute(builder: (_) => const ElderlyHomePage()));
       } else {
+        await BackgroundServiceHelper.startService(user.id, user.name, false);
         Navigator.pushReplacement(context,
             MaterialPageRoute(builder: (_) => const CaregiverHomePage()));
       }

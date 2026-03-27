@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'firebase_options.dart';
 import 'data/data_service.dart';
 import 'l10n/app_localizations.dart';
@@ -26,6 +28,12 @@ void main() async {
 
   await NotificationService.init();
   await NotificationService.requestPermissions();
+
+  // FIX: initBackgroundService() only registers the service configuration
+  // with the OS — it does NOT start tracking yet. Actual tracking starts
+  // in _SplashRouterState once we know the logged-in user is elderly.
+  // This call is still needed here so the OS knows the service exists and
+  // can restart it after a device reboot (autoStartOnBoot = true).
   await initBackgroundService();
 
   final dataService = DataService();
@@ -75,15 +83,40 @@ class _SplashRouter extends StatefulWidget {
   State<_SplashRouter> createState() => _SplashRouterState();
 }
 
-class _SplashRouterState extends State<_SplashRouter> {
+class _SplashRouterState extends State<_SplashRouter> with WidgetsBindingObserver {
   bool _ready = false;
+  Timer? _heartbeatTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Mark app as foregrounded at startup
+    SharedPreferences.getInstance().then((p) => p.setBool('isAppForeground', true));
+    
+    // Heartbeat to prevent isAppForeground from getting stuck true if app is killed
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      SharedPreferences.getInstance().then((p) => p.setInt('appHeartbeat', DateTime.now().millisecondsSinceEpoch));
+    });
+
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) setState(() => _ready = true);
     });
+  }
+
+  @override
+  void dispose() {
+    _heartbeatTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Keep SharedPreferences in sync so the background service knows
+    // whether to fire notifications (it skips when app is foregrounded).
+    final isFg = state == AppLifecycleState.resumed;
+    SharedPreferences.getInstance().then((p) => p.setBool('isAppForeground', isFg));
   }
 
   @override
@@ -91,7 +124,17 @@ class _SplashRouterState extends State<_SplashRouter> {
     if (!_ready) return const _SplashScreen();
     final user = context.watch<DataService>().currentUser;
     if (user == null) return const LoginPage();
-    if (user.role == UserRole.elderly) return const ElderlyHomePage();
+
+    if (user.role == UserRole.elderly) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        BackgroundServiceHelper.startService(user.id, user.name, true);
+      });
+      return const ElderlyHomePage();
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      BackgroundServiceHelper.startService(user.id, user.name, false);
+    });
     return const CaregiverHomePage();
   }
 }

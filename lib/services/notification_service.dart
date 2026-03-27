@@ -21,6 +21,15 @@ class NotificationService {
     enableVibration: true,
   );
 
+  static const AndroidNotificationChannel _messagesChannel =
+      AndroidNotificationChannel(
+    'eldercare_messages',
+    'Messages',
+    description: 'In-app messages between group members.',
+    importance: Importance.high,
+    playSound: true,
+  );
+
   static Future<void> init() async {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -35,10 +44,11 @@ class NotificationService {
     );
     await _plugin.initialize(settings);
 
-    await _plugin
+    final android = _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(_sosChannel);
+            AndroidFlutterLocalNotificationsPlugin>();
+    await android?.createNotificationChannel(_sosChannel);
+    await android?.createNotificationChannel(_messagesChannel);
   }
 
   static Future<void> requestPermissions() async {

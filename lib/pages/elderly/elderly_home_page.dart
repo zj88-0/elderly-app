@@ -57,7 +57,7 @@ class _ElderlyHomePageState extends State<ElderlyHomePage>
     final user = ds.currentUser;
     if (user == null || user.role != UserRole.elderly) return;
     // Start background service so it has the elderlyId for background tracking
-    BackgroundServiceHelper.startForElderly(user.id, user.name);
+    BackgroundServiceHelper.startService(user.id, user.name, true);
     ActivityTrackerService.startTracking(
       elderlyId: user.id,
       dataService: ds,

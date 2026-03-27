@@ -20,6 +20,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -31,6 +32,7 @@ import '../models/message_model.dart';
 import '../models/wellbeing_model.dart';
 import '../services/background_service.dart';
 import '../services/notification_service.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 
 const _uuid = Uuid();
 
@@ -394,8 +396,40 @@ class DataService extends ChangeNotifier {
       }
       await _subscribeToSos();
       await _subscribeToUnreadCounts();
+      await _saveBackgroundServiceData();
       notifyListeners();
     });
+  }
+
+  /// Persists the user's group and name data to SharedPreferences so the
+  /// background service isolate (which cannot access DataService) can set up
+  /// its own Firestore listeners for messages and SOS when the app is closed.
+  Future<void> _saveBackgroundServiceData() async {
+    final user = _currentUser;
+    if (user == null) return;
+    try {
+      final groups = _groups.map((g) => {
+        'id': g.id,
+        'elderlyId': g.elderlyId,
+        'allMemberIds': g.allMemberIds,
+      }).toList();
+      final userNames = <String, String>{};
+      for (final e in _userCache.entries) {
+        userNames[e.key] = e.value.name;
+      }
+      userNames[user.id] = user.name;
+      for (final e in _nicknames.entries) {
+        if (e.value != null) userNames[e.key] = e.value!;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('currentUserId', user.id);
+      await prefs.setString(
+          'currentUserRole',
+          user.role == UserRole.elderly ? 'elderly' : 'caregiver');
+      await prefs.setString('bgGroups', jsonEncode(groups));
+      await prefs.setString('bgUserNames', jsonEncode(userNames));
+      FlutterBackgroundService().invoke('updateListeners');
+    } catch (_) {}
   }
 
   Future<GroupModel> createGroup(String name) async {
@@ -1270,11 +1304,14 @@ class DataService extends ChangeNotifier {
         final sos = SosModel.fromJson({'id': doc.id, ...doc.data()});
         _sosList.add(sos);
 
-        // Trigger push notification for new active SOS alerts for caregivers
+        // Only fire notification in DataService when the app is in the foreground.
+        // The background service (separate isolate) handles it when app is closed.
+        final lifecycleState = WidgetsBinding.instance.lifecycleState;
         if (isCaregiver &&
             sos.status == SosStatus.active &&
             !isInitialLoad &&
-            !_knownSosIds.contains(sos.id)) {
+            !_knownSosIds.contains(sos.id) &&
+            lifecycleState == AppLifecycleState.resumed) {
           final elderlyName = _nicknames[sos.elderlyId] ??
               (await _fetchUser(sos.elderlyId))?.name ??
               'Elderly member';
@@ -1331,6 +1368,8 @@ class DataService extends ChangeNotifier {
     }
     _unreadSubs.clear();
     _unreadCounts.clear();
+    // Clear seeding tokens so a restarted subscription seeds fresh baselines.
+    _knownMessageIds.removeWhere((id) => id.startsWith('unread_seeded_'));
 
     for (final group in _groups) {
       final groupId = group.id;
@@ -1349,24 +1388,30 @@ class DataService extends ChangeNotifier {
           .listen((snap) async {
         
         final newCount = snap.exists ? ((snap.data()?['count'] as int?) ?? 0) : 0;
-        final prevCount = _unreadCounts[otherId] ?? 0;
 
-        _unreadCounts[otherId] = newCount;
-        notifyListeners();
-
-        // Always handle initial seeding
-        bool isInitialLoad = !_knownMessageIds.contains('unread_seeded_$groupId');
-        if (isInitialLoad) {
+        // First snapshot is the baseline seed — load the count for the badge
+        // but do NOT fire a notification (messages already existed before now).
+        if (!_knownMessageIds.contains('unread_seeded_$groupId')) {
           _knownMessageIds.add('unread_seeded_$groupId');
+          _unreadCounts[otherId] = newCount;
+          notifyListeners();
           return;
         }
 
+        final prevCount = _unreadCounts[otherId] ?? 0;
+        _unreadCounts[otherId] = newCount;
+        notifyListeners();
+
         // Only notify if the count went UP — meaning a NEW message arrived
-        // directed at ME.  Skip if count went down (conversation was read).
+        // directed at ME. Skip if count went down (conversation was read).
         if (newCount <= prevCount) return;
 
-        // Skip notification if we are actively viewing this conversation right now.
-        // Also auto-mark it read so the unread counter stays zeroed out.
+        // Only fire from DataService when the app is in the foreground.
+        // Background service handles notification when app is closed/backgrounded.
+        final isResumed = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+        if (!isResumed) return;
+
+        // If actively viewing this exact conversation, just mark read — no popup.
         if (groupId == _activeConvGroupId) {
           markConversationRead(otherUserId: otherId, groupId: groupId);
           return;

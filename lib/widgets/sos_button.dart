@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../data/data_service.dart';
 import '../l10n/app_localizations.dart';
 import '../models/user_model.dart';
-import '../services/notification_service.dart';
+
 import '../theme/app_theme.dart';
 
 class SosButton extends StatelessWidget {
@@ -157,10 +157,6 @@ class SosButton extends StatelessWidget {
         elderlyId: user.id,
         description:
         description.isEmpty ? 'Emergency! Please help.' : description,
-      );
-      await NotificationService.showSosNotification(
-        elderlyName: user.name,
-        description: description,
       );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
