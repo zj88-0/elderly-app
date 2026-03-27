@@ -101,9 +101,17 @@ class _CaregiverHomePageState extends State<CaregiverHomePage> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        children: [
+      body: RefreshIndicator(
+        onRefresh: () async {
+          final dataService = context.read<DataService>();
+          await Future.wait([
+            dataService.syncElderlySummaries(),
+            dataService.refreshAllUnreadCounts(),
+          ]);
+        },
+        child: ListView(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          children: [
           // ── Welcome banner ─────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -462,6 +470,7 @@ class _CaregiverHomePageState extends State<CaregiverHomePage> {
 
           const SizedBox(height: 32),
         ],
+      ),
       ),
     );
   }

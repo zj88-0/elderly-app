@@ -1293,7 +1293,7 @@ class DataService extends ChangeNotifier {
     });
   }
 
-  Future<void> _refreshAllUnreadCounts() async {
+  Future<void> refreshAllUnreadCounts() async {
     final me = _currentUser?.id;
     if (me == null) return;
     _unreadCounts.clear();
@@ -1347,22 +1347,28 @@ class DataService extends ChangeNotifier {
           .doc(me)
           .snapshots()
           .listen((snap) async {
-        if (!snap.exists) return;
-
-        final newCount = (snap.data()?['count'] as int?) ?? 0;
+        
+        final newCount = snap.exists ? ((snap.data()?['count'] as int?) ?? 0) : 0;
         final prevCount = _unreadCounts[otherId] ?? 0;
 
         _unreadCounts[otherId] = newCount;
         notifyListeners();
 
-        // Only notify if the count went UP — meaning a NEW message arrived
-        // directed at ME.  Skip if count went down (conversation was read) or
-        // if this is the very first snapshot (initial load, prevCount == 0 and
-        // we haven't seeded _knownMessageIds yet).
-        if (newCount <= prevCount) return;
-        if (!_knownMessageIds.contains('unread_seeded_$groupId')) {
-          // Mark the initial snapshot as seen so future increments notify
+        // Always handle initial seeding
+        bool isInitialLoad = !_knownMessageIds.contains('unread_seeded_$groupId');
+        if (isInitialLoad) {
           _knownMessageIds.add('unread_seeded_$groupId');
+          return;
+        }
+
+        // Only notify if the count went UP — meaning a NEW message arrived
+        // directed at ME.  Skip if count went down (conversation was read).
+        if (newCount <= prevCount) return;
+
+        // Skip notification if we are actively viewing this conversation right now.
+        // Also auto-mark it read so the unread counter stays zeroed out.
+        if (groupId == _activeConvGroupId) {
+          markConversationRead(otherUserId: otherId, groupId: groupId);
           return;
         }
 
